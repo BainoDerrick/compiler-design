@@ -82,6 +82,11 @@ class Lexer:
             "while": "WHILE",
             "return": "RETURN",
             "int": "TYPE_INT",
+            "float": "TYPE_FLOAT",
+            "string": "TYPE_STRING",
+            "bool": "TYPE_BOOL",
+            "true": "TRUE",
+            "false": "FALSE",
             "print": "PRINT"
         }
         
