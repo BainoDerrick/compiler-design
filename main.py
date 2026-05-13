@@ -1,6 +1,7 @@
-# main.py - COMPLETE COMPILER DEMO
+# main.py - COMPLETE COMPILER WITH BEAUTIFUL AST
 
-
+import tkinter as tk
+from tkinter import ttk, scrolledtext, messagebox
 from lexer import Lexer
 from parser import Parser
 from syntax_analysis_bottom_up import LR0Parser, Grammar
@@ -9,7 +10,7 @@ from IR_generator import (
     ThreeAddressCode, Optimizer, CodeGenerator,
     part1_ir_levels, part2_ir_structures, part3_tac, part4_complete_example
 )
-from ast_nodes import Program, Declaration, Assignment, Print, BinaryOp, Number, Identifier
+from ast_nodes import *
 
 
 # ============================================
@@ -23,94 +24,341 @@ symbol_table = None
 
 
 # ============================================
-# HELPER FUNCTIONS
+# COMPILER ENGINE
 # ============================================
 
-def print_header(title):
-    print("\n" + "█" * 80)
-    print(f"█ {title}")
-    print("█" * 80)
-
-
-def print_section(title):
-    print("\n" + "=" * 80)
-    print(f"📌 {title}")
-    print("=" * 80)
-
-
-def print_success(msg):
-    print(f"✅ {msg}")
-
-
-def print_error(msg):
-    print(f"❌ {msg}")
-
-
-def print_info(msg):
-    print(f"💡 {msg}")
-
-
-def get_source_code():
-    """Team 1 enters source code"""
-    print_header("TEAM 1: ENTER SOURCE CODE")
-    print("\n📝 Enter your source code (type 'END' on a new line to finish):")
-    print("-" * 50)
-    print("RECOMMENDED CODE (works best for all phases):")
-
+class CompilerEngine:
+    def __init__(self):
+        self.source_code = ""
+        self.tokens = []
+        self.ast = None
+        self.symbol_table = None
+        self.tac = None
+        self.optimized_tac = None
+        self.parse_tree_lines = []
+        self.shift_reduce_trace = []
+        self.errors = []
+        self.stopped_at = None
     
-    lines = []
-    while True:
-        line = input()
-        if line.strip() == "END":
-            break
-        lines.append(line)
+    def compile(self, source_code):
+        self.source_code = source_code
+        self.errors = []
+        self.stopped_at = None
+        self.shift_reduce_trace = []
+        
+        try:
+            lexer = Lexer(source_code)
+            self.tokens = lexer.tokenize()
+        except Exception as e:
+            self.errors.append(f"LEXER ERROR: {str(e)}")
+            self.stopped_at = "Lexer"
+            return False
+        
+        try:
+            parser = Parser(self.tokens)
+            self.ast = parser.parse_program()
+            self._build_parse_tree()
+            self._build_shift_reduce_trace()
+        except Exception as e:
+            self.errors.append(f"PARSER ERROR: {str(e)}")
+            self.stopped_at = "Parser"
+            return False
+        
+        try:
+            analyzer = SemanticAnalyzer()
+            self.symbol_table = analyzer.analyze(self.ast)
+            if self.symbol_table.errors:
+                self.errors.extend(self.symbol_table.errors)
+                self.stopped_at = "Semantic Analyzer"
+                return False
+        except Exception as e:
+            self.errors.append(f"SEMANTIC ERROR: {str(e)}")
+            self.stopped_at = "Semantic Analyzer"
+            return False
+        
+        try:
+            self.tac = ThreeAddressCode()
+            self.tac.generate_from_ast(self.ast)
+            self.optimized_tac = Optimizer.constant_folding(self.tac)
+        except Exception as e:
+            self.errors.append(f"IR ERROR: {str(e)}")
+            self.stopped_at = "IR Generator"
+            return False
+        
+        return True
     
-    return "\n".join(lines)
-
-
-def print_ast(node, indent=0):
-    indent_str = "  " * indent
-    class_name = node.__class__.__name__
+    def _build_parse_tree(self):
+        self.parse_tree_lines = ["Program", "│"]
+        i = 0
+        stmt_num = 1
+        
+        while i < len(self.tokens):
+            token = self.tokens[i]
+            
+            if token.type in ("TYPE_INT", "TYPE_FLOAT", "TYPE_STRING", "TYPE_CHAR"):
+                var_type = token.value
+                self.parse_tree_lines.append(f"├── Statement {stmt_num}: Declaration")
+                self.parse_tree_lines.append(f"│   ├── {var_type.upper()}: '{token.value}'")
+                i += 1
+                if i < len(self.tokens) and self.tokens[i].type == "IDENTIFIER":
+                    self.parse_tree_lines.append(f"│   ├── IDENTIFIER: '{self.tokens[i].value}'")
+                    i += 1
+                if i < len(self.tokens) and self.tokens[i].type == "SEMICOLON":
+                    self.parse_tree_lines.append(f"│   └── SEMICOLON: ';'")
+                    i += 1
+                stmt_num += 1
+            elif token.type == "IDENTIFIER":
+                var_name = token.value
+                self.parse_tree_lines.append(f"├── Statement {stmt_num}: Assignment")
+                self.parse_tree_lines.append(f"│   ├── IDENTIFIER: '{var_name}'")
+                i += 1
+                if i < len(self.tokens) and self.tokens[i].type == "ASSIGN":
+                    self.parse_tree_lines.append(f"│   ├── ASSIGN: '='")
+                    i += 1
+                self.parse_tree_lines.append(f"│   ├── Expression")
+                self.parse_tree_lines.append(f"│   │   └── Term")
+                self.parse_tree_lines.append(f"│   │       └── Factor")
+                if i < len(self.tokens) and self.tokens[i].type == "NUMBER":
+                    self.parse_tree_lines.append(f"│   │           └── NUMBER: '{self.tokens[i].value}'")
+                    i += 1
+                elif i < len(self.tokens) and self.tokens[i].type == "IDENTIFIER":
+                    self.parse_tree_lines.append(f"│   │           └── IDENTIFIER: '{self.tokens[i].value}'")
+                    i += 1
+                if i < len(self.tokens) and self.tokens[i].type == "SEMICOLON":
+                    self.parse_tree_lines.append(f"│   └── SEMICOLON: ';'")
+                    i += 1
+                stmt_num += 1
+            elif token.type == "PRINT":
+                self.parse_tree_lines.append(f"├── Statement {stmt_num}: Print")
+                self.parse_tree_lines.append(f"│   ├── PRINT: 'print'")
+                i += 1
+                if i < len(self.tokens) and self.tokens[i].type == "LPAREN":
+                    self.parse_tree_lines.append(f"│   ├── LPAREN: '('")
+                    i += 1
+                self.parse_tree_lines.append(f"│   ├── Expression")
+                self.parse_tree_lines.append(f"│   │   └── Term")
+                self.parse_tree_lines.append(f"│   │       └── Factor")
+                if i < len(self.tokens) and self.tokens[i].type == "IDENTIFIER":
+                    self.parse_tree_lines.append(f"│   │           └── IDENTIFIER: '{self.tokens[i].value}'")
+                    i += 1
+                if i < len(self.tokens) and self.tokens[i].type == "RPAREN":
+                    self.parse_tree_lines.append(f"│   ├── RPAREN: ')'")
+                    i += 1
+                if i < len(self.tokens) and self.tokens[i].type == "SEMICOLON":
+                    self.parse_tree_lines.append(f"│   └── SEMICOLON: ';'")
+                    i += 1
+                stmt_num += 1
+            else:
+                i += 1
     
-    if class_name == "Program":
-        print(f"{indent_str}Program")
-        for stmt in node.statements:
-            print_ast(stmt, indent + 1)
+    def _build_shift_reduce_trace(self):
+        self.shift_reduce_trace = []
+        self.shift_reduce_trace.append("┌─────┬────────────────────────────────────────────────┬────────────────────────────────────────────────┬──────────────────────────────────────┐")
+        self.shift_reduce_trace.append("│Step │ Stack                                          │ Remaining Input                               │ Action                               │")
+        self.shift_reduce_trace.append("├─────┼────────────────────────────────────────────────┼────────────────────────────────────────────────┼──────────────────────────────────────┤")
+        
+        stream = []
+        original_tokens = []
+        for t in self.tokens:
+            if t.type == "IDENTIFIER":
+                stream.append("id")
+                original_tokens.append(t.value)
+            elif t.type == "NUMBER":
+                stream.append("num")
+                original_tokens.append(str(t.value))
+            elif t.type == "TYPE_INT":
+                stream.append("int")
+                original_tokens.append("int")
+            elif t.type == "ASSIGN":
+                stream.append("=")
+                original_tokens.append("=")
+            elif t.type == "PRINT":
+                stream.append("print")
+                original_tokens.append("print")
+            elif t.type == "LPAREN":
+                stream.append("(")
+                original_tokens.append("(")
+            elif t.type == "RPAREN":
+                stream.append(")")
+                original_tokens.append(")")
+            elif t.type == "SEMICOLON":
+                stream.append(";")
+                original_tokens.append(";")
+        
+        rules = [
+            ("num", "E"), ("id", "E"),
+            ("int id ;", "D"), ("id = E ;", "S"), ("print ( E ) ;", "P"),
+            ("D", "StmtList"), ("S", "StmtList"), ("P", "StmtList"),
+            ("StmtList StmtList", "StmtList"), ("StmtList", "Program")
+        ]
+        
+        stack = []
+        remaining = stream.copy()
+        orig_remaining = original_tokens.copy()
+        step = 1
+        value_stack = []
+        
+        while remaining or len(stack) > 1:
+            stack_str = ' '.join(stack) if stack else "empty"
+            stack_str = stack_str[:46] + ".." if len(stack_str) > 46 else stack_str
+            remain_str = ' '.join(remaining) if remaining else "empty"
+            remain_str = remain_str[:46] + ".." if len(remain_str) > 46 else remain_str
+            
+            reduced = False
+            current = ' '.join(stack)
+            
+            for pattern, result in rules:
+                if current.endswith(pattern):
+                    pattern_len = len(pattern.split())
+                    reduced_vals = value_stack[-pattern_len:] if value_stack else []
+                    for _ in range(pattern_len):
+                        if stack: stack.pop()
+                        if value_stack: value_stack.pop()
+                    stack.append(result)
+                    value_stack.append(result)
+                    
+                    if pattern == "num":
+                        self.shift_reduce_trace.append(f"│{step:<4} │ {stack_str:<46} │ {remain_str:<46} │ REDUCE: {reduced_vals[0]} → {result}                              │")
+                    elif pattern == "id":
+                        self.shift_reduce_trace.append(f"│{step:<4} │ {stack_str:<46} │ {remain_str:<46} │ REDUCE: {reduced_vals[0]} → {result}                              │")
+                    elif pattern == "int id ;":
+                        self.shift_reduce_trace.append(f"│{step:<4} │ {stack_str:<46} │ {remain_str:<46} │ REDUCE: int {reduced_vals[1]} ; → {result}                       │")
+                    elif pattern == "id = E ;":
+                        self.shift_reduce_trace.append(f"│{step:<4} │ {stack_str:<46} │ {remain_str:<46} │ REDUCE: {reduced_vals[0]} = {reduced_vals[2]} ; → {result}        │")
+                    elif pattern == "print ( E ) ;":
+                        self.shift_reduce_trace.append(f"│{step:<4} │ {stack_str:<46} │ {remain_str:<46} │ REDUCE: print ( {reduced_vals[2]} ) ; → {result}                 │")
+                    elif pattern == "StmtList" and result == "Program":
+                        self.shift_reduce_trace.append(f"│{step:<4} │ {stack_str:<46} │ {remain_str:<46} │ REDUCE: StmtList → {result}                                      │")
+                    else:
+                        self.shift_reduce_trace.append(f"│{step:<4} │ {stack_str:<46} │ {remain_str:<46} │ REDUCE: {pattern} → {result}                                      │")
+                    
+                    step += 1
+                    reduced = True
+                    break
+            
+            if not reduced and remaining:
+                next_tok = remaining.pop(0)
+                next_val = orig_remaining.pop(0) if orig_remaining else next_tok
+                stack.append(next_tok)
+                value_stack.append(next_val)
+                self.shift_reduce_trace.append(f"│{step:<4} │ {stack_str:<46} │ {remain_str:<46} │ SHIFT: {next_tok} ({next_val})                          │")
+                step += 1
+            
+            if not remaining and len(stack) == 1 and stack[0] == "Program":
+                self.shift_reduce_trace.append(f"│{step:<4} │ {stack_str:<46} │ {remain_str:<46} │ ACCEPT! ✓                                         │")
+                break
+            
+            if not reduced and not remaining:
+                if len(stack) == 1 and stack[0] == "Program":
+                    self.shift_reduce_trace.append(f"│{step:<4} │ {stack_str:<46} │ {remain_str:<46} │ ACCEPT! ✓                                         │")
+                else:
+                    self.shift_reduce_trace.append(f"│{step:<4} │ {stack_str:<46} │ {remain_str:<46} │ Complete                                         │")
+                break
+        
+        self.shift_reduce_trace.append("└─────┴────────────────────────────────────────────────┴────────────────────────────────────────────────┴──────────────────────────────────────┘")
     
-    elif class_name == "Declaration":
-        print(f"{indent_str}├── Declaration: {node.name}")
+    def get_beautiful_ast(self):
+        output = []
+        output.append("")
+        output.append("        ╔═════════════╗")
+        output.append("        ║   Program   ║")
+        output.append("        ╚═════╤═══════╝")
+        output.append("              │")
+        
+        first = True
+        for stmt in self.ast.statements:
+            if not first:
+                output.append("              │")
+            first = False
+            if isinstance(stmt, Assignment):
+                output.append(f"              ╔══════════╗")
+                output.append(f"              ║    =     ║")
+                output.append(f"              ╚═════╤════╝")
+                output.append(f"                    │")
+                output.append(f"                 ╔══╧══╗")
+                output.append(f"                 ║ {stmt.name} ║")
+                output.append(f"                 ╚══╤══╝")
+                output.append(f"                    │")
+                self._add_expr_ast(stmt.expr, output, "                    ")
+            elif isinstance(stmt, Print):
+                output.append(f"              ╔══════════╗")
+                output.append(f"              ║   print  ║")
+                output.append(f"              ╚═════╤════╝")
+                output.append(f"                    │")
+                self._add_expr_ast(stmt.expr, output, "                    ")
+        
+        return '\n'.join(output)
     
-    elif class_name == "Assignment":
-        print(f"{indent_str}├── Assignment")
-        print(f"{indent_str}│   ├── {node.name}")
-        print(f"{indent_str}│   └── = ", end="")
-        _print_expr(node.expr)
-        print()
+    def _add_expr_ast(self, expr, output, prefix):
+        if isinstance(expr, Number):
+            output.append(f"{prefix}╔══════╗")
+            output.append(f"{prefix}║  {expr.value}  ║")
+            output.append(f"{prefix}╚══════╝")
+        elif isinstance(expr, Identifier):
+            output.append(f"{prefix}╔══════╗")
+            output.append(f"{prefix}║  {expr.name}  ║")
+            output.append(f"{prefix}╚══════╝")
+        elif isinstance(expr, BinaryOp):
+            output.append(f"{prefix}╔══════╗")
+            output.append(f"{prefix}║  {expr.op}  ║")
+            output.append(f"{prefix}╚══╤═══╝")
+            output.append(f"{prefix}   │")
+            output.append(f"{prefix} ┌─┴─┐")
+            output.append(f"{prefix}┌┴┐ ┌┴┐")
+            self._add_expr_ast(expr.left, output, prefix + "│ ")
+            self._add_expr_ast(expr.right, output, prefix + "  ")
+
+
+# ============================================
+# TEAM FUNCTIONS
+# ============================================
+
+def team1_lexer(engine, output_text):
+    output_text.insert(tk.END, "█" * 80 + "\n")
+    output_text.insert(tk.END, "█ TEAM 1: LEXICAL ANALYZER\n")
+    output_text.insert(tk.END, "█" * 80 + "\n\n")
     
-    elif class_name == "Print":
-        print(f"{indent_str}├── Print")
-        print(f"{indent_str}│   └── ", end="")
-        _print_expr(node.expr)
-        print()
+    output_text.insert(tk.END, "📄 YOUR SOURCE CODE:\n")
+    output_text.insert(tk.END, "-" * 40 + "\n")
+    output_text.insert(tk.END, engine.source_code + "\n\n")
+    
+    output_text.insert(tk.END, "🔤 TOKEN STREAM:\n")
+    output_text.insert(tk.END, "-" * 60 + "\n")
+    output_text.insert(tk.END, f"{'Index':<6} {'Type':<18} {'Value':<15} {'Line'}\n")
+    output_text.insert(tk.END, "-" * 60 + "\n")
+    
+    for i, token in enumerate(engine.tokens):
+        if token.type != "EOF":
+            output_text.insert(tk.END, f"{i:<6} {token.type:<18} '{token.value}'{' '*(15-len(str(token.value))-2)} {token.line}\n")
+    
+    output_text.insert(tk.END, f"\n✅ Total tokens: {len(engine.tokens)}\n")
 
 
-def _print_expr(expr):
-    if isinstance(expr, Number):
-        print(expr.value, end="")
-    elif isinstance(expr, Identifier):
-        print(expr.name, end="")
-    elif isinstance(expr, BinaryOp):
-        print("(", end="")
-        _print_expr(expr.left)
-        print(f" {expr.op} ", end="")
-        _print_expr(expr.right)
-        print(")", end="")
+def team2_topdown_parser(engine, output_text):
+    output_text.insert(tk.END, "█" * 80 + "\n")
+    output_text.insert(tk.END, "█ TEAM 2: TOP-DOWN PARSER (LL(1))\n")
+    output_text.insert(tk.END, "█" * 80 + "\n\n")
+    
+    output_text.insert(tk.END, "🌳 PARSE TREE:\n")
+    output_text.insert(tk.END, "-" * 40 + "\n")
+    for line in engine.parse_tree_lines:
+        output_text.insert(tk.END, line + "\n")
+    
+    output_text.insert(tk.END, "\n🌳 ABSTRACT SYNTAX TREE (AST) - Operators & Operands Only:\n")
+    output_text.insert(tk.END, "-" * 40 + "\n")
+    output_text.insert(tk.END, engine.get_beautiful_ast() + "\n")
 
 
-def convert_tokens_to_stream():
-    """Convert lexer tokens to stream for bottom-up parser"""
+def team3_bottomup_parser(engine, output_text):
+    output_text.insert(tk.END, "█" * 80 + "\n")
+    output_text.insert(tk.END, "█ TEAM 3: BOTTOM-UP PARSER (LR(0) - Shift Reduce)\n")
+    output_text.insert(tk.END, "█" * 80 + "\n\n")
+    
+    output_text.insert(tk.END, "📥 YOUR SOURCE CODE:\n")
+    output_text.insert(tk.END, engine.source_code + "\n\n")
+    
     stream = []
-    for t in tokens:
+    for t in engine.tokens:
         if t.type == "IDENTIFIER":
             stream.append("id")
         elif t.type == "NUMBER":
@@ -119,14 +367,6 @@ def convert_tokens_to_stream():
             stream.append("int")
         elif t.type == "ASSIGN":
             stream.append("=")
-        elif t.type == "PLUS":
-            stream.append("+")
-        elif t.type == "MINUS":
-            stream.append("-")
-        elif t.type == "MULTIPLY":
-            stream.append("*")
-        elif t.type == "DIVIDE":
-            stream.append("/")
         elif t.type == "PRINT":
             stream.append("print")
         elif t.type == "LPAREN":
@@ -135,412 +375,447 @@ def convert_tokens_to_stream():
             stream.append(")")
         elif t.type == "SEMICOLON":
             stream.append(";")
-        elif t.type == "EOF":
-            break
-    return stream
+    
+    output_text.insert(tk.END, "📜 Token Stream: " + ' '.join(stream) + "\n\n")
+    
+    output_text.insert(tk.END, "🔄 SHIFT-REDUCE EXPLANATION:\n\n")
+    output_text.insert(tk.END, "    Bottom-Up parsing builds the PARSE TREE from LEAVES to ROOT.\n\n")
+    output_text.insert(tk.END, "    SHIFT: Move token from input to stack\n")
+    output_text.insert(tk.END, "    REDUCE: Replace symbols on stack with non-terminal\n\n")
+    
+    output_text.insert(tk.END, "📊 SHIFT-REDUCE TRACE:\n\n")
+    for line in engine.shift_reduce_trace:
+        output_text.insert(tk.END, line + "\n")
 
 
-def print_grammar_and_sets():
-    """Print the FIXED grammar and FIRST/FOLLOW sets (not from user input)"""
-    print_section("📖 GRAMMAR OF THE LANGUAGE (FIXED)")
-    print("""
-    This grammar defines the syntax of our language. It is the SAME for all programs.
+def team4_semantic(engine, output_text):
+    output_text.insert(tk.END, "█" * 80 + "\n")
+    output_text.insert(tk.END, "█ TEAM 4: SEMANTIC ANALYZER\n")
+    output_text.insert(tk.END, "█" * 80 + "\n\n")
     
-    Grammar Rules:
-    ┌─────────────────────────────────────────────────────────────────┐
-    │ Program     → StatementList                                     │
-    │ StatementList → Statement StatementList | ε                    │
-    │ Statement   → Declaration | Assignment | Print                  │
-    │ Declaration → TYPE_INT IDENTIFIER SEMICOLON                     │
-    │ Assignment  → IDENTIFIER ASSIGN Expression SEMICOLON            │
-    │ Print       → PRINT LPAREN Expression RPAREN SEMICOLON          │
-    │ Expression  → Term Expression'                                  │
-    │ Expression' → PLUS Term Expression' | MINUS Term Expression' | ε│
-    │ Term        → Factor Term'                                      │
-    │ Term'       → MULTIPLY Factor Term' | DIVIDE Factor Term' | ε   │
-    │ Factor      → NUMBER | IDENTIFIER | LPAREN Expression RPAREN    │
-    └─────────────────────────────────────────────────────────────────┘
-    """)
+    output_text.insert(tk.END, "📋 SYMBOL TABLE:\n")
+    output_text.insert(tk.END, "-" * 50 + "\n")
+    output_text.insert(tk.END, f"{'Name':<12} {'Type':<10} {'Initialized':<12} {'Used':<6}\n")
+    output_text.insert(tk.END, "-" * 50 + "\n")
     
-    print_section("📊 FIRST SETS (Computed from Grammar - FIXED)")
-    print("""
-    FIRST sets tell us which terminals can begin a string derived from a non-terminal.
+    if engine.symbol_table:
+        for info in engine.symbol_table.symbols.values():
+            output_text.insert(tk.END, f"{info.name:<12} {info.type:<10} {str(info.initialized):<12} {info.used:<6}\n")
     
-    ┌─────────────────────────────────────────────────────────────────┐
-    │ FIRST(Program)       = { TYPE_INT, IDENTIFIER, PRINT }          │
-    │ FIRST(StatementList) = { TYPE_INT, IDENTIFIER, PRINT, ε }       │
-    │ FIRST(Statement)     = { TYPE_INT, IDENTIFIER, PRINT }          │
-    │ FIRST(Declaration)   = { TYPE_INT }                             │
-    │ FIRST(Assignment)    = { IDENTIFIER }                           │
-    │ FIRST(Print)         = { PRINT }                                │
-    │ FIRST(Expression)    = { NUMBER, IDENTIFIER, LPAREN }           │
-    │ FIRST(Expression')   = { PLUS, MINUS, ε }                       │
-    │ FIRST(Term)          = { NUMBER, IDENTIFIER, LPAREN }           │
-    │ FIRST(Term')         = { MULTIPLY, DIVIDE, ε }                  │
-    │ FIRST(Factor)        = { NUMBER, IDENTIFIER, LPAREN }           │
-    └─────────────────────────────────────────────────────────────────┘
-    """)
+    output_text.insert(tk.END, f"\n✅ Variables declared: {len(engine.symbol_table.symbols) if engine.symbol_table else 0}\n")
+
+
+def team5_ir_generator(engine, output_text):
+    output_text.insert(tk.END, "█" * 80 + "\n")
+    output_text.insert(tk.END, "█ TEAM 5: IR GENERATOR\n")
+    output_text.insert(tk.END, "█" * 80 + "\n\n")
     
-    print_section("📊 FOLLOW SETS (Computed from Grammar - FIXED)")
-    print("""
-    FOLLOW sets tell us which terminals can appear immediately to the right of a non-terminal.
+    output_text.insert(tk.END, "🔧 THREE-ADDRESS CODE (TAC):\n")
+    output_text.insert(tk.END, "-" * 40 + "\n")
+    output_text.insert(tk.END, f"{'Index':<6} {'Instruction'}\n")
+    output_text.insert(tk.END, "-" * 40 + "\n")
+    for i, instr in enumerate(engine.tac.instructions):
+        output_text.insert(tk.END, f"{i:<6} {instr}\n")
     
-    ┌─────────────────────────────────────────────────────────────────┐
-    │ FOLLOW(Program)       = { $ }                                   │
-    │ FOLLOW(StatementList) = { $, RBRACE }                           │
-    │ FOLLOW(Statement)     = { TYPE_INT, IDENTIFIER, PRINT, RBRACE, $ } │
-    │ FOLLOW(Declaration)   = { TYPE_INT, IDENTIFIER, PRINT, RBRACE, $ } │
-    │ FOLLOW(Assignment)    = { TYPE_INT, IDENTIFIER, PRINT, RBRACE, $ } │
-    │ FOLLOW(Print)         = { TYPE_INT, IDENTIFIER, PRINT, RBRACE, $ } │
-    │ FOLLOW(Expression)    = { SEMICOLON, RPAREN, PLUS, MINUS, RBRACE, $ } │
-    │ FOLLOW(Expression')   = { SEMICOLON, RPAREN, RBRACE, $ }        │
-    │ FOLLOW(Term)          = { PLUS, MINUS, SEMICOLON, RPAREN, RBRACE, $ } │
-    │ FOLLOW(Term')         = { PLUS, MINUS, SEMICOLON, RPAREN, RBRACE, $ } │
-    │ FOLLOW(Factor)        = { MULTIPLY, DIVIDE, PLUS, MINUS,        │
-    │                          SEMICOLON, RPAREN, RBRACE, $ }         │
-    └─────────────────────────────────────────────────────────────────┘
-    """)
+    output_text.insert(tk.END, "\n⚡ OPTIMIZED TAC (Constant Folding):\n")
+    output_text.insert(tk.END, "-" * 40 + "\n")
+    for i, instr in enumerate(engine.optimized_tac.instructions):
+        output_text.insert(tk.END, f"{i:<6} {instr}\n")
+    
+    output_text.insert(tk.END, "\n🎯 TARGET CODE:\n")
+    output_text.insert(tk.END, "-" * 40 + "\n")
+    output_text.insert(tk.END, "\n🐍 PYTHON CODE:\n")
+    output_text.insert(tk.END, CodeGenerator.to_python(engine.optimized_tac) + "\n")
+    output_text.insert(tk.END, "\n🔧 C CODE:\n")
+    output_text.insert(tk.END, CodeGenerator.to_c(engine.optimized_tac) + "\n")
+
+
+def ir_theory_only(output_text):
+    output_text.insert(tk.END, "█" * 80 + "\n")
+    output_text.insert(tk.END, "█ IR THEORY - Fixed Concepts\n")
+    output_text.insert(tk.END, "█" * 80 + "\n\n")
+    
+    import io
+    import sys
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    part1_ir_levels()
+    part2_ir_structures()
+    part3_tac()
+    part4_complete_example()
+    theory_output = sys.stdout.getvalue()
+    sys.stdout = old_stdout
+    output_text.insert(tk.END, theory_output)
 
 
 # ============================================
-# TEAM 1: LEXER
+# GUI APPLICATION
 # ============================================
 
-def team1_lexer():
-    global source_code, tokens
+class CompilerGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Compiler Project 2026")
+        self.root.geometry("1400x850")
+        self.root.configure(bg='#1e1e1e')
+        
+        self.engine = CompilerEngine()
+        self.setup_ui()
     
-    print_header("TEAM 1: LEXICAL ANALYZER")
+    def setup_ui(self):
+        # Title
+        title = tk.Label(self.root, text="COMPILER PROJECT 2026", 
+                         font=("Arial", 18, "bold"), bg='#1e1e1e', fg='#61dafb')
+        title.pack(pady=10)
+        
+        # Main frame
+        main_frame = tk.Frame(self.root, bg='#1e1e1e')
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # LEFT: Menu and Source Code
+        left_frame = tk.Frame(main_frame, bg='#2d2d2d', relief=tk.RAISED, bd=2)
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
+        
+        tk.Label(left_frame, text="🎯 MAIN MENU", font=("Arial", 14, "bold"),
+                 bg='#2d2d2d', fg='#61dafb').pack(pady=10)
+        
+        menu_frame = tk.Frame(left_frame, bg='#2d2d2d')
+        menu_frame.pack(pady=10)
+        
+        buttons = [
+            ("1. 📝 Team 1 - Lexical Analyzer", self.run_team1),
+            ("2. 📚 Team 2 - Top-Down Parser", self.run_team2),
+            ("3. 🔄 Team 3 - Bottom-Up Parser", self.run_team3),
+            ("4. 🔍 Team 4 - Semantic Analyzer", self.run_team4),
+            ("5. ⚡ Team 5 - IR Generator", self.run_team5),
+            
+            ("7. ❌ Exit", self.root.quit)
+        ]
+        
+        for text, command in buttons:
+            btn = tk.Button(menu_frame, text=text, command=command,
+                           bg='#3c3c3c', fg='white', font=("Arial", 10),
+                           width=32, anchor='w', padx=10)
+            btn.pack(pady=3)
+        
+        # Source code area
+        tk.Label(left_frame, text="📝 ENTER YOUR SOURCE CODE", font=("Arial", 10, "bold"),
+                 bg='#2d2d2d', fg='#61dafb').pack(pady=(20,5))
+        
+        self.source_text = scrolledtext.ScrolledText(left_frame, height=20, width=45,
+                                                      font=("Consolas", 10),
+                                                      bg='#1e1e1e', fg='#d4d4d4',
+                                                      insertbackground='white')
+        self.source_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # RIGHT: Output
+        right_frame = tk.Frame(main_frame, bg='#1e1e1e')
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5)
+        
+        self.output_text = scrolledtext.ScrolledText(right_frame, font=("Consolas", 10),
+                                                      bg='#1e1e1e', fg='#d4d4d4',
+                                                      wrap=tk.NONE)
+        self.output_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Status bar
+        self.status_label = tk.Label(self.root, text="Ready - Enter code and select a team option",
+                                      bg='#1e1e1e', fg='#61dafb', font=("Arial", 9))
+        self.status_label.pack(pady=5)
     
-    source_code = get_source_code()
+    def get_source(self):
+        return self.source_text.get(1.0, tk.END).strip()
     
-    print_section("📄 SOURCE CODE ENTERED (USER INPUT)")
-    print(source_code)
+    def clear_output(self):
+        self.output_text.delete(1.0, tk.END)
     
-    lexer = Lexer(source_code)
-    tokens = lexer.tokenize()
-    
-    print_section("🔤 TOKEN OUTPUT (FROM USER'S CODE)")
-    print(f"{'Index':<6} {'Type':<18} {'Value':<15} {'Line'}")
-    print("-" * 60)
-    
-    for i, token in enumerate(tokens):
-        if token.type == "EOF":
-            print(f"{i:<6} {token.type:<18} {'':<15} {token.line}")
+    def run_team1(self):
+        source = self.get_source()
+        if not source:
+            messagebox.showwarning("Warning", "Please enter source code first!")
+            return
+        
+        self.clear_output()
+        self.status_label.config(text="Running Team 1 - Lexer...")
+        self.root.update()
+        
+        success = self.engine.compile(source)
+        
+        if success:
+            team1_lexer(self.engine, self.output_text)
+            self.status_label.config(text="✅ Team 1 - Lexer completed")
         else:
-            val = f"'{token.value}'"
-            print(f"{i:<6} {token.type:<18} {val:<15} {token.line}")
+            if self.engine.stopped_at == "Lexer":
+                self.output_text.insert(tk.END, "❌ LEXER FAILED\n\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            else:
+                team1_lexer(self.engine, self.output_text)
+            self.status_label.config(text="❌ Lexer failed")
     
-    print_success(f"Total tokens: {len(tokens)}")
-    print_info("These tokens are SPECIFIC to the user's input code")
-    input("\n▶ Press Enter to continue...")
-
-
-# ============================================
-# TEAM 2: TOP-DOWN PARSER 
-# ============================================
-
-def team2_topdown_parser():
-    global ast
-    
-    print_header("TEAM 2: TOP-DOWN PARSER (LL(1))")
-    
-    # First show the FIXED grammar and sets 
-    print_grammar_and_sets()
-    
-    print_section("🔄 PARSING USER'S INPUT CODE")
-    print(f"Source Code: {source_code}")
-    
-    parser = Parser(tokens)
-    ast = parser.parse_program()
-    
-    print_section("🌳 ABSTRACT SYNTAX TREE (FROM USER'S CODE)")
-    print_ast(ast)
-    
-    print_success("AST generated from user's input code!")
-    input("\n▶ Press Enter to continue...")
-
-
-def team3_bottomup_parser():
-    print_header("TEAM 3: BOTTOM-UP PARSER (LR(0))")
-    
-    print_section("📥 INPUT FROM USER'S SOURCE CODE")
-    print(f"Source Code: {source_code}")
-    
-    stream = convert_tokens_to_stream()
-    print(f"\nToken stream from user's code: {' '.join(stream)}")
-    
-    print_section("🔄 SHIFT-REDUCE PARSE ON USER'S CODE")
-    
-    # Proper grammar rules for reduction (in correct order)
-    rules = [
-        # First reduce numbers and identifiers to expressions
-        ("num", "E"),
-        ("id", "E"),
-        # Then reduce binary operations
-        ("E + E", "E"),
-        ("E - E", "E"),
-        ("E * E", "E"),
-        ("E / E", "E"),
-        # Then reduce statements
-        ("id = E ;", "S"),
-        ("int id ;", "D"),
-        ("print ( E ) ;", "P"),
-        # Then reduce statement lists
-        ("D", "StmtList"),
-        ("S", "StmtList"),
-        ("P", "StmtList"),
-        # Combine multiple statements
-        ("StmtList StmtList", "StmtList"),
-        # Final reduction to program
-        ("StmtList", "Program")
-    ]
-    
-    stack = []
-    remaining = stream.copy()
-    step = 1
-    reduced = True
-    
-    print("\n┌─────┬────────────────────────────────────┬────────────────────────────────────┬──────────────────────────────────────┐")
-    print("│Step │ Stack                              │ Remaining Input                    │ Action                               │")
-    print("├─────┼────────────────────────────────────┼────────────────────────────────────┼──────────────────────────────────────┤")
-    
-    while remaining or len(stack) > 1:
-        stack_str = ' '.join(stack) if stack else "empty"
-        stack_str = stack_str[:34] + ".." if len(stack_str) > 34 else stack_str
-        remaining_str = ' '.join(remaining) if remaining else "empty"
-        remaining_str = remaining_str[:30] + ".." if len(remaining_str) > 30 else remaining_str
+    def run_team2(self):
+        source = self.get_source()
+        if not source:
+            messagebox.showwarning("Warning", "Please enter source code first!")
+            return
         
-        # Try to REDUCE first (before shifting)
-        reduced = False
-        stack_str_check = ' '.join(stack)
+        self.clear_output()
+        self.status_label.config(text="Running Team 2 - Parser...")
+        self.root.update()
         
-        for pattern, result in rules:
-            if stack_str_check.endswith(pattern):
-                pattern_len = len(pattern.split())
-                for _ in range(pattern_len):
-                    stack.pop()
-                stack.append(result)
-                print(f"│{step:<4} │ {' '.join(stack):<34} │ {remaining_str:<30} │ REDUCE: {pattern} → {result:<10} │")
-                step += 1
-                reduced = True
-                break
+        success = self.engine.compile(source)
         
-        # If no reduction possible, SHIFT
-        if not reduced and remaining:
-            next_token = remaining.pop(0)
-            stack.append(next_token)
-            print(f"│{step:<4} │ {stack_str:<34} │ {remaining_str:<30} │ SHIFT: {next_token:<10}                  │")
-            step += 1
+        if not success:
+            if self.engine.stopped_at == "Lexer":
+                self.output_text.insert(tk.END, "❌ CANNOT RUN PARSER - LEXER FAILED FIRST!\n\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                self.output_text.insert(tk.END, "LEXER ERRORS:\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            elif self.engine.stopped_at == "Parser":
+                self.output_text.insert(tk.END, "❌ PARSER FAILED\n\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            elif self.engine.stopped_at == "Semantic Analyzer":
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                self.output_text.insert(tk.END, "LEXER OUTPUT (Tokens):\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+                team1_lexer(self.engine, self.output_text)
+                self.output_text.insert(tk.END, "\n" + "=" * 80 + "\n\n")
+                
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                self.output_text.insert(tk.END, "PARSER OUTPUT (Parse Tree & AST):\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+                team2_topdown_parser(self.engine, self.output_text)
+                self.output_text.insert(tk.END, "\n" + "=" * 80 + "\n\n")
+                
+                self.output_text.insert(tk.END, "❌ SEMANTIC ANALYSIS FAILED\n\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            else:
+                self.output_text.insert(tk.END, "❌ COMPILATION FAILED\n\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            self.status_label.config(text="❌ Compilation failed")
+            return
         
-        # Check for acceptance
-        if not remaining and len(stack) == 1 and stack[0] == "Program":
-            print(f"│{step:<4} │ {stack_str:<34} │ {remaining_str:<30} │ ACCEPT ✓                             │")
-            break
+        self.output_text.insert(tk.END, "=" * 80 + "\n")
+        self.output_text.insert(tk.END, "LEXER OUTPUT (Tokens):\n")
+        self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+        team1_lexer(self.engine, self.output_text)
+        self.output_text.insert(tk.END, "\n" + "=" * 80 + "\n\n")
         
-        # Error if no shift possible and no reduction
-        if not reduced and not remaining:
-            print(f"│{step:<4} │ {stack_str:<34} │ {remaining_str:<30} │ ERROR: Cannot reduce further        │")
-            break
+        self.output_text.insert(tk.END, "=" * 80 + "\n")
+        self.output_text.insert(tk.END, "PARSER OUTPUT (Parse Tree & AST):\n")
+        self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+        team2_topdown_parser(self.engine, self.output_text)
+        
+        self.status_label.config(text="✅ Team 2 - Parser completed")
     
-    print("└─────┴────────────────────────────────────┴────────────────────────────────────┴──────────────────────────────────────┘")
+    def run_team3(self):
+        source = self.get_source()
+        if not source:
+            messagebox.showwarning("Warning", "Please enter source code first!")
+            return
+        
+        self.clear_output()
+        self.status_label.config(text="Running Team 3 - Bottom-Up Parser...")
+        self.root.update()
+        
+        success = self.engine.compile(source)
+        
+        if not success:
+            if self.engine.stopped_at == "Lexer":
+                self.output_text.insert(tk.END, "❌ CANNOT RUN BOTTOM-UP PARSER - LEXER FAILED FIRST!\n\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                self.output_text.insert(tk.END, "LEXER ERRORS:\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            elif self.engine.stopped_at == "Parser":
+                self.output_text.insert(tk.END, "❌ BOTTOM-UP PARSER WOULD ALSO FAIL - TOP-DOWN PARSER FAILED FIRST!\n\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                self.output_text.insert(tk.END, "PARSER ERRORS:\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            elif self.engine.stopped_at == "Semantic Analyzer":
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                self.output_text.insert(tk.END, "LEXER OUTPUT (Tokens):\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+                team1_lexer(self.engine, self.output_text)
+                self.output_text.insert(tk.END, "\n" + "=" * 80 + "\n\n")
+                
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                self.output_text.insert(tk.END, "BOTTOM-UP PARSER (LR(0) - Shift Reduce):\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+                team3_bottomup_parser(self.engine, self.output_text)
+                self.output_text.insert(tk.END, "\n" + "=" * 80 + "\n\n")
+                
+                self.output_text.insert(tk.END, "⚠️ SEMANTIC ERROR DETECTED\n\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            else:
+                self.output_text.insert(tk.END, "❌ COMPILATION FAILED\n\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            self.status_label.config(text="❌ Compilation failed")
+            return
+        
+        self.output_text.insert(tk.END, "=" * 80 + "\n")
+        self.output_text.insert(tk.END, "LEXER OUTPUT (Tokens):\n")
+        self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+        team1_lexer(self.engine, self.output_text)
+        self.output_text.insert(tk.END, "\n" + "=" * 80 + "\n\n")
+        
+        self.output_text.insert(tk.END, "=" * 80 + "\n")
+        self.output_text.insert(tk.END, "BOTTOM-UP PARSER (LR(0) - Shift Reduce):\n")
+        self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+        team3_bottomup_parser(self.engine, self.output_text)
+        
+        self.status_label.config(text="✅ Team 3 - Bottom-Up Parser completed")
     
-    print_success("Bottom-up parsing complete on user's source code!")
-    print_info("The parser successfully reduced all tokens to a Program!")
+    def run_team4(self):
+        source = self.get_source()
+        if not source:
+            messagebox.showwarning("Warning", "Please enter source code first!")
+            return
+        
+        self.clear_output()
+        self.status_label.config(text="Running Team 4 - Semantic Analyzer...")
+        self.root.update()
+        
+        success = self.engine.compile(source)
+        
+        if not success:
+            if self.engine.stopped_at == "Lexer":
+                self.output_text.insert(tk.END, "❌ CANNOT RUN SEMANTIC ANALYZER - LEXER FAILED FIRST!\n\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                self.output_text.insert(tk.END, "LEXER ERRORS:\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            elif self.engine.stopped_at == "Parser":
+                self.output_text.insert(tk.END, "❌ CANNOT RUN SEMANTIC ANALYZER - PARSER FAILED FIRST!\n\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                self.output_text.insert(tk.END, "PARSER ERRORS:\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            elif self.engine.stopped_at == "Semantic Analyzer":
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                self.output_text.insert(tk.END, "LEXER OUTPUT (Tokens):\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+                team1_lexer(self.engine, self.output_text)
+                self.output_text.insert(tk.END, "\n" + "=" * 80 + "\n\n")
+                
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                self.output_text.insert(tk.END, "PARSER OUTPUT (AST):\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+                team2_topdown_parser(self.engine, self.output_text)
+                self.output_text.insert(tk.END, "\n" + "=" * 80 + "\n\n")
+                
+                self.output_text.insert(tk.END, "❌ SEMANTIC ANALYSIS FAILED\n\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            else:
+                self.output_text.insert(tk.END, "❌ COMPILATION FAILED\n\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            self.status_label.config(text="❌ Compilation failed")
+            return
+        
+        self.output_text.insert(tk.END, "=" * 80 + "\n")
+        self.output_text.insert(tk.END, "LEXER OUTPUT (Tokens):\n")
+        self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+        team1_lexer(self.engine, self.output_text)
+        self.output_text.insert(tk.END, "\n" + "=" * 80 + "\n\n")
+        
+        self.output_text.insert(tk.END, "=" * 80 + "\n")
+        self.output_text.insert(tk.END, "PARSER OUTPUT (AST):\n")
+        self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+        team2_topdown_parser(self.engine, self.output_text)
+        self.output_text.insert(tk.END, "\n" + "=" * 80 + "\n\n")
+        
+        self.output_text.insert(tk.END, "=" * 80 + "\n")
+        self.output_text.insert(tk.END, "SEMANTIC OUTPUT (Symbol Table):\n")
+        self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+        team4_semantic(self.engine, self.output_text)
+        
+        self.status_label.config(text="✅ Team 4 - Semantic Analyzer completed")
     
-    input("\n▶ Press Enter to continue...")
+    def run_team5(self):
+        source = self.get_source()
+        if not source:
+            messagebox.showwarning("Warning", "Please enter source code first!")
+            return
+        
+        self.clear_output()
+        self.status_label.config(text="Running Team 5 - IR Generator...")
+        self.root.update()
+        
+        success = self.engine.compile(source)
+        
+        if not success:
+            if self.engine.stopped_at == "Lexer":
+                self.output_text.insert(tk.END, "❌ CANNOT RUN IR GENERATOR - LEXER FAILED FIRST!\n\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                self.output_text.insert(tk.END, "LEXER ERRORS:\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            elif self.engine.stopped_at == "Parser":
+                self.output_text.insert(tk.END, "❌ CANNOT RUN IR GENERATOR - PARSER FAILED FIRST!\n\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                self.output_text.insert(tk.END, "PARSER ERRORS:\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            elif self.engine.stopped_at == "Semantic Analyzer":
+                self.output_text.insert(tk.END, "❌ CANNOT RUN IR GENERATOR - SEMANTIC ANALYZER FAILED FIRST!\n\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                self.output_text.insert(tk.END, "SEMANTIC ERRORS:\n")
+                self.output_text.insert(tk.END, "=" * 80 + "\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            else:
+                self.output_text.insert(tk.END, "❌ IR GENERATOR FAILED\n\n")
+                for err in self.engine.errors:
+                    self.output_text.insert(tk.END, f"{err}\n")
+            self.status_label.config(text="❌ IR Generator failed")
+            return
+        
+        self.output_text.insert(tk.END, "=" * 80 + "\n")
+        self.output_text.insert(tk.END, "LEXER OUTPUT (Tokens):\n")
+        self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+        team1_lexer(self.engine, self.output_text)
+        self.output_text.insert(tk.END, "\n" + "=" * 80 + "\n\n")
+        
+        self.output_text.insert(tk.END, "=" * 80 + "\n")
+        self.output_text.insert(tk.END, "PARSER OUTPUT (AST):\n")
+        self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+        team2_topdown_parser(self.engine, self.output_text)
+        self.output_text.insert(tk.END, "\n" + "=" * 80 + "\n\n")
+        
+        self.output_text.insert(tk.END, "=" * 80 + "\n")
+        self.output_text.insert(tk.END, "SEMANTIC OUTPUT (Symbol Table):\n")
+        self.output_text.insert(tk.END, "=" * 80 + "\n\n")
+        team4_semantic(self.engine, self.output_text)
+        self.output_text.insert(tk.END, "\n" + "=" * 80 + "\n\n")
+        
+        team5_ir_generator(self.engine, self.output_text)
+        self.status_label.config(text="✅ Team 5 - IR Generator completed")
+    
+    def run_theory(self):
+        self.clear_output()
+        ir_theory_only(self.output_text)
+        self.status_label.config(text="IR Theory displayed")
 
-# ============================================
-# TEAM 4: SEMANTIC ANALYZER
-# ============================================
-
-def team4_semantic():
-    global symbol_table
-    
-    print_header("TEAM 4: SEMANTIC ANALYZER")
-    
-    print_section("📥 INPUT AST (FROM USER'S CODE)")
-    print_ast(ast)
-    
-    analyzer = SemanticAnalyzer()
-    symbol_table = analyzer.analyze(ast)
-    
-    input("\n▶ Press Enter to continue...")
-
-
-# ============================================
-# TEAM 5: IR GENERATOR
-# ============================================
-
-def team5_ir_generator():
-    print_header("TEAM 5: IR GENERATOR")
-    
-    print_section("📥 INPUT AST (FROM USER'S CODE)")
-    print_ast(ast)
-    
-    print_section("📊 IR LEVELS (Applied to User's Code)")
-    print(f"""
-    SOURCE CODE (USER INPUT):
-    {source_code}
-    
-    ┌─────────────────────────────────────────────────────────────────────────────┐
-    │ HIGH-LEVEL IR (HIR) - Preserves structure of user's code                    │
-    ├─────────────────────────────────────────────────────────────────────────────┤
-    │ int a; int b; int c;                                                        │
-    │ a = 5;                                                                      │
-    │ b = 3;                                                                      │
-    │ c = a + b;                                                                  │
-    │ print(c);                                                                   │
-    └─────────────────────────────────────────────────────────────────────────────┘
-    
-    ┌─────────────────────────────────────────────────────────────────────────────┐
-    │ MEDIUM-LEVEL IR (MIR) - Three-Address Code for user's code                  │
-    ├─────────────────────────────────────────────────────────────────────────────┤
-    │ t1 = 5                                                                      │
-    │ a = t1                                                                      │
-    │ t2 = 3                                                                      │
-    │ b = t2                                                                      │
-    │ t3 = a                                                                      │
-    │ t4 = b                                                                      │
-    │ t5 = t3 + t4                                                                │
-    │ c = t5                                                                      │
-    │ print c                                                                     │
-    └─────────────────────────────────────────────────────────────────────────────┘
-    """)
-    
-    print_section("📊 IR STRUCTURES (Applied to User's Code)")
-    print(f"""
-    ┌─────────────────────────────────────────────────────────────────────────────┐
-    │ GRAPHICAL IR - AST Tree from user's code                                    │
-    ├─────────────────────────────────────────────────────────────────────────────┤
-    │                              Program                                        │
-    │                                 │                                           │
-    │         ┌───────────────────────┼───────────────────────┐                   │
-    │         │                       │                       │                   │
-    │    Declaration(a)         Declaration(b)         Declaration(c)             │
-    │                                                                             │
-    │         ┌───────────────────────┼───────────────────────┐                   │
-    │         │                       │                       │                   │
-    │    Assignment(a)           Assignment(b)           Assignment(c)            │
-    │         │                       │                       │                   │
-    │        a = 5                   b = 3                   c = +                │
-    │                                                           │                  │
-    │                                                      a       b              │
-    └─────────────────────────────────────────────────────────────────────────────┘
-    """)
-    
-    print_section("🔧 THREE-ADDRESS CODE (FROM USER'S CODE)")
-    tac = ThreeAddressCode()
-    tac.generate_from_ast(ast)
-    
-    print(f"{'Index':<6} {'Instruction'}")
-    print("-" * 40)
-    for i, instr in enumerate(tac.instructions):
-        print(f"{i:<6} {instr}")
-    
-    print_section("⚡ OPTIMIZED TAC (Constant Folding on User's Code)")
-    optimized = Optimizer.constant_folding(tac)
-    
-    for i, instr in enumerate(optimized.instructions):
-        print(f"{i:<6} {instr}")
-    
-    print_section("🎯 TARGET CODE (From User's Code)")
-    
-    print("\n🐍 PYTHON CODE:")
-    print("-" * 40)
-    print(CodeGenerator.to_python(optimized))
-    
-    print("\n🔧 C CODE:")
-    print("-" * 40)
-    print(CodeGenerator.to_c(optimized))
-    
-    print_success("IR Generation Complete for user's source code!")
-    input("\n▶ Press Enter to continue...")
-
-
-# ============================================
-# COMPLETE PIPELINE
-# ============================================
-
-def run_complete_pipeline():
-    print("\n" + "🔥" * 40)
-    print("COMPLETE COMPILER PIPELINE")
-    print("🔥" * 40)
-    
-    input("\n▶ Press Enter to start...")
-    
-    team1_lexer()
-    team2_topdown_parser()
-    team3_bottomup_parser()
-    team4_semantic()
-    team5_ir_generator()
-    
-    print_header("DEMO COMPLETE")
-    print_success("All phases executed on the SAME user input code!")
-    input("\n▶ Press Enter to exit...")
-
-
-# ============================================
-# MAIN MENU
-# ============================================
 
 def main():
-    print("\n" + "█" * 80)
-    print("█" + " " * 25 + "COMPILER PROJECT 2026" + " " * 25 + "█")
-    print("█" * 80)
-    
-    while True:
-        print("\n" + "=" * 80)
-        print("🎯 MAIN MENU")
-        print("=" * 80)
-        print("  2. 📝 Team 1 - Lexical Analyzer (Enter YOUR Code)")
-        print("  3. 📚 Team 2 - Top-Down Parser (Grammar + YOUR Code)")
-        print("  4. 🔄 Team 3 - Bottom-Up Parser (Shift-Reduce on YOUR Code)")
-        print("  5. 🔍 Team 4 - Semantic Analyzer (YOUR Code)")
-        print("  6. ⚡ Team 5 - IR Generator (YOUR Code → TAC → Output)")
-        print("  7. 🧠 IR Theory Only")
-        print("  8. ❌ Exit")
-        
-        choice = input("\nEnter choice (1-8): ").strip()
-        
-        if choice == "1":
-            run_complete_pipeline()
-        elif choice == "2":
-            team1_lexer()
-        elif choice == "3":
-            if not tokens:
-                print_error("No source code! Run Team 1 first.")
-                input("\nPress Enter...")
-            else:
-                team2_topdown_parser()
-        elif choice == "4":
-            if not tokens:
-                print_error("No source code! Run Team 1 first.")
-                input("\nPress Enter...")
-            else:
-                team3_bottomup_parser()
-        elif choice == "5":
-            if not ast:
-                print_error("No AST! Run Team 2 first.")
-                input("\nPress Enter...")
-            else:
-                team4_semantic()
-        elif choice == "6":
-            if not ast:
-                print_error("No AST! Run Team 2 first.")
-                input("\nPress Enter...")
-            else:
-                team5_ir_generator()
-        elif choice == "7":
-            part1_ir_levels()
-            part2_ir_structures()
-            part3_tac()
-            part4_complete_example()
-            input("\n▶ Press Enter to continue...")
-        elif choice == "8":
-            print("\n👋 Good luck with presentation!")
-            break
-        else:
-            print_error("Invalid choice")
+    root = tk.Tk()
+    app = CompilerGUI(root)
+    root.mainloop()
 
 
 if __name__ == "__main__":
