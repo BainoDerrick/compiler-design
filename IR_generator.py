@@ -1,16 +1,15 @@
-# ir_generator.py - COMPLETE IR GENERATOR
-# Contains: Presentation Parts + Actual TAC Generation Code
+# ir_generator.py - COMPLETE IR GENERATOR (No dummy examples)
 
-from ast_nodes import Program, Declaration, Assignment, Print, BinaryOp, Number, Identifier
+from ast_nodes import *
 from typing import List, Union
 
 
 # ============================================
-# ACTUAL TAC GENERATION CODE (For main.py)
+# ACTUAL TAC GENERATION CODE
 # ============================================
 
 class ThreeAddressCode:
-    """Generates Three-Address Code from AST"""
+    """Generates Three-Address Code from AST for ALL language features"""
     
     def __init__(self):
         self.instructions = []
@@ -35,28 +34,136 @@ class ThreeAddressCode:
     
     def _visit(self, node):
         if isinstance(node, Declaration):
-            self.add(f"{node.name} := 0")
+            self._visit_declaration(node)
         elif isinstance(node, Assignment):
-            result = self._visit_expression(node.expr)
-            self.add(f"{node.name} := {result}")
+            self._visit_assignment(node)
         elif isinstance(node, Print):
-            value = self._visit_expression(node.expr)
-            self.add(f"print {value}")
+            self._visit_print(node)
+        elif isinstance(node, Block):
+            self._visit_block(node)
+        elif isinstance(node, WhileLoop):
+            self._visit_while(node)
+        elif isinstance(node, ForLoop):
+            self._visit_for(node)
+        elif isinstance(node, IfStatement):
+            self._visit_if(node)
+    
+    def _visit_declaration(self, node: Declaration):
+        # Initialize variable to 0
+        self.add(f"{node.name} := 0")
+    
+    def _visit_assignment(self, node: Assignment):
+        result = self._visit_expression(node.expr)
+        self.add(f"{node.name} := {result}")
+    
+    def _visit_print(self, node: Print):
+        value = self._visit_expression(node.expr)
+        self.add(f"print {value}")
+    
+    def _visit_block(self, node: Block):
+        for stmt in node.statements:
+            self._visit(stmt)
+    
+    def _visit_while(self, node: WhileLoop):
+        start_label = self.new_label()
+        body_label = self.new_label()
+        end_label = self.new_label()
+        
+        self.add(f"goto {start_label}")
+        self.add_label(body_label)
+        
+        # Generate body
+        self._visit(node.body)
+        self.add_label(start_label)
+        
+        # Generate condition
+        cond = self._visit_expression(node.condition)
+        self.add(f"if {cond} != 0 goto {body_label}")
+        self.add_label(end_label)
+    
+    def _visit_for(self, node: ForLoop):
+        start_label = self.new_label()
+        body_label = self.new_label()
+        end_label = self.new_label()
+        
+        # Initialization
+        if node.init:
+            if isinstance(node.init, list):
+                for stmt in node.init:
+                    self._visit(stmt)
+            else:
+                self._visit(node.init)
+        
+        self.add(f"goto {start_label}")
+        self.add_label(body_label)
+        
+        # Body
+        self._visit(node.body)
+        
+        # Update
+        if node.update:
+            self._visit(node.update)
+        
+        self.add_label(start_label)
+        
+        # Condition
+        if node.condition:
+            cond = self._visit_expression(node.condition)
+            self.add(f"if {cond} != 0 goto {body_label}")
+        else:
+            self.add(f"goto {body_label}")
+        
+        self.add_label(end_label)
+    
+    def _visit_if(self, node: IfStatement):
+        else_label = self.new_label()
+        end_label = self.new_label()
+        
+        # Condition
+        cond = self._visit_expression(node.condition)
+        self.add(f"if {cond} == 0 goto {else_label}")
+        
+        # Then body
+        self._visit(node.then_body)
+        self.add(f"goto {end_label}")
+        
+        # Else body
+        self.add_label(else_label)
+        if node.else_body:
+            self._visit(node.else_body)
+        
+        # End
+        self.add_label(end_label)
     
     def _visit_expression(self, expr):
         if isinstance(expr, Number):
-            temp = self.new_temp()
-            self.add(f"{temp} := {expr.value}")
-            return temp
+            return expr.value
+        elif isinstance(expr, Float):
+            return expr.value
+        elif isinstance(expr, String):
+            return f'"{expr.value}"'
+        elif isinstance(expr, Character):
+            return f"'{expr.value}'"
         elif isinstance(expr, Identifier):
             return expr.name
         elif isinstance(expr, BinaryOp):
             left = self._visit_expression(expr.left)
             right = self._visit_expression(expr.right)
             temp = self.new_temp()
-            self.add(f"{temp} := {left} {expr.op} {right}")
+            self.add(f"{temp} := {left} {self._op_to_string(expr.op)} {right}")
             return temp
         return "0"
+    
+    def _op_to_string(self, op):
+        op_map = {
+            "PLUS": "+", "MINUS": "-", "MULTIPLY": "*", "DIVIDE": "/",
+            "POWER": "^", "EQUAL_EQUAL": "==", "NOT_EQUAL": "!=",
+            "LESS": "<", "LESS_EQUAL": "<=", "GREATER": ">", "GREATER_EQUAL": ">="
+        }
+        return op_map.get(op, str(op))
+    
+    def add_label(self, label: str):
+        self.add(f"{label}:")
     
     def __str__(self):
         lines = []
@@ -73,12 +180,11 @@ class Optimizer:
         optimized = ThreeAddressCode()
         
         for instr in tac.instructions:
-            # Check for constant operations like: t3 := 3 * 2
             parts = instr.split()
-            if len(parts) == 4 and parts[1] == ':=' and parts[3] in ['+', '-', '*', '/']:
+            if len(parts) == 4 and parts[1] == ':=' and parts[3] in ['+', '-', '*', '/', '^']:
                 try:
-                    left = int(parts[2])
-                    right = int(parts[4])
+                    left = float(parts[2]) if '.' in parts[2] else int(parts[2])
+                    right = float(parts[4]) if '.' in parts[4] else int(parts[4])
                     op = parts[3]
                     
                     if op == '+':
@@ -88,7 +194,13 @@ class Optimizer:
                     elif op == '*':
                         result = left * right
                     elif op == '/':
-                        result = left // right if right != 0 else 0
+                        result = left / right if right != 0 else 0
+                    elif op == '^':
+                        result = left ** right
+                    
+                    # Format result nicely
+                    if isinstance(result, float) and result.is_integer():
+                        result = int(result)
                     
                     optimized.add(f"{parts[0]} := {result}")
                     continue
@@ -114,6 +226,8 @@ class CodeGenerator:
             elif ":=" in instr:
                 parts = instr.split()
                 lines.append(f"{indent}{parts[0]} = {parts[2]}")
+            elif instr.endswith(":"):
+                lines.append(f"{indent}# {instr}")
         
         lines.append(f"{indent}return 0")
         lines.append("")
@@ -128,20 +242,25 @@ class CodeGenerator:
         declared = set()
         
         for instr in tac.instructions:
-            if ":=" in instr:
+            if ":=" in instr and not instr.startswith("L"):
                 parts = instr.split()
                 var = parts[0]
-                if var not in declared and var.startswith('t'):
-                    lines.append(f"{indent}int {var};")
+                if var not in declared and (var.startswith('t') or var.isalpha()):
+                    if '.' in str(parts[2]):
+                        lines.append(f"{indent}float {var};")
+                    else:
+                        lines.append(f"{indent}int {var};")
                     declared.add(var)
         
         for instr in tac.instructions:
             if instr.startswith("print"):
                 var = instr.split()[1]
                 lines.append(f"{indent}printf(\"%d\\n\", {var});")
-            elif ":=" in instr:
+            elif ":=" in instr and not instr.startswith("L"):
                 parts = instr.split()
                 lines.append(f"{indent}{parts[0]} = {parts[2]};")
+            elif instr.endswith(":"):
+                lines.append(f"{indent}{instr}")
         
         lines.append(f"{indent}return 0;")
         lines.append("}")
@@ -149,7 +268,7 @@ class CodeGenerator:
 
 
 # ============================================
-# PART 1: IR LEVELS
+# IR PRESENTATION FUNCTIONS (No dummy examples)
 # ============================================
 
 def part1_ir_levels():
@@ -158,33 +277,18 @@ def part1_ir_levels():
     print("█"*60)
     print("""
 HIGH-LEVEL IR (HIR):
-    for i := 1 to 10 step 1 do
-        print(i);
-    endfor
+    Preserves high-level constructs like loops and conditionals.
+    Example: for i := 1 to 10 step 1 do print(i); endfor
 
 MEDIUM-LEVEL IR (MIR):
-    i := 1
-L1: if i > 10 goto L2
-    print(i)
-    i := i + 1
-    goto L1
-L2:
+    Explicit control flow using labels and goto.
+    Example: i := 1; L1: if i>10 goto L2; print(i); i:=i+1; goto L1; L2:
 
 LOW-LEVEL IR (LIR):
-    mov i, #1
-L1: cmp i, #10
-    bgt L2
-    push i
-    call print
-    add i, i, #1
-    b L1
-L2: ret
+    Assembly-like code with registers and explicit jumps.
+    Example: mov i,#1; L1: cmp i,#10; bgt L2; push i; call print; add i,#1; b L1; L2: ret
 """)
 
-
-# ============================================
-# PART 2: IR STRUCTURES
-# ============================================
 
 def part2_ir_structures():
     print("\n" + "█"*60)
@@ -198,9 +302,9 @@ GRAPHICAL IR (AST Tree):
           │
         BinaryOp (+)
          /        \\
-      Num(5)    BinaryOp(*)
-                /        \\
-            Num(3)     Num(2)
+      Number(5)  BinaryOp(*)
+                 /        \\
+            Number(3)  Number(2)
 
 LINEAR IR (Three-Address Code):
     t1 := 2
@@ -210,7 +314,7 @@ LINEAR IR (Three-Address Code):
     t5 := t4 + t3
     x := t5
 
-HYBRID IR (Basic Blocks + CFG):
+HYBRID IR (Basic Blocks + Control Flow Graph):
     ┌─────────────┐
     │    BB1      │
     │ t1 := 2     │
@@ -227,10 +331,6 @@ HYBRID IR (Basic Blocks + CFG):
 """)
 
 
-# ============================================
-# PART 3: THREE-ADDRESS CODE (TAC)
-# ============================================
-
 def part3_tac():
     print("\n" + "█"*60)
     print("PART 3: THREE-ADDRESS CODE (TAC)")
@@ -238,104 +338,64 @@ def part3_tac():
     print("""
 FORMAT:  result := operand1 operator operand2
 
-EXAMPLE: x = 5 + 3 * 2
+Each instruction has at most ONE operator and THREE addresses.
+Temporaries (t1, t2, t3...) store intermediate values.
 
-STEP BY STEP:
-    Step 1: t1 := 2      (load first constant)
-    Step 2: t2 := 3      (load second constant)
-    Step 3: t3 := t2 * t1 (multiplication first)
-    Step 4: t4 := 5      (load constant)
-    Step 5: t5 := t4 + t3 (addition)
-    Step 6: x := t5       (assignment)
+EXAMPLES:
+    x = 5 + 3 → t1 := 5; t2 := 3; t3 := t1 + t2; x := t3
+    while (i < 10) → L1: if i < 10 goto L2; goto L3; L2: ...; goto L1; L3:
+""")
 
-WHY t1, t2, t3?
-    Each temporary holds ONE intermediate value.
-    Makes translation to assembly easier.
+def part4_complete_example():
+    print("\n" + "█"*60)
+    print("PART 4: COMPLETE EXAMPLE")
+    print("█"*60)
+    print("""
+SOURCE CODE:
+    int x;
+    x = 5 + 3 * 2;
+    print(x);
+
+TAC GENERATED:
+    0:  x := 0
+    1:  t1 := 2
+    2:  t2 := 3
+    3:  t3 := t2 * t1
+    4:  t4 := 5
+    5:  t5 := t4 + t3
+    6:  x := t5
+    7:  print x
+
+OPTIMIZED TAC:
+    0:  x := 0
+    1:  t1 := 2
+    2:  t2 := 3
+    3:  t3 := 6
+    4:  t4 := 5
+    5:  t5 := 11
+    6:  x := 11
+    7:  print x
 """)
 
 
 # ============================================
-# PART 4: COMPLETE EXAMPLE
-# ============================================
-
-def part4_complete_example():
-    print("\n" + "█"*60)
-    print("PART 4: COMPLETE EXAMPLE - x = 5 + 3 * 2")
-    print("█"*60)
-    
-    print("\n📝 SOURCE CODE:")
-    print("    int x;")
-    print("    x = 5 + 3 * 2;")
-    print("    print(x);")
-    
-    print("\n🌳 STEP 1: AST (Graphical IR)")
-    print("    Program")
-    print("      Declaration: x")
-    print("      Assignment: x =")
-    print("                +")
-    print("               / \\")
-    print("              5   *")
-    print("                 / \\")
-    print("                3   2")
-    print("      Print: x")
-    
-    print("\n📝 STEP 2: TAC (Linear IR)")
-    print("    0    t1 := 2")
-    print("    1    t2 := 3")
-    print("    2    t3 := t2 * t1")
-    print("    3    t4 := 5")
-    print("    4    t5 := t4 + t3")
-    print("    5    x := t5")
-    print("    6    print x")
-    
-    print("\n📊 STEP 3: CFG (Hybrid IR)")
-    print("    ┌─────────────────┐")
-    print("    │      BB1        │")
-    print("    │   t1 := 2       │")
-    print("    │   t2 := 3       │")
-    print("    │   t3 := t2 * t1 │")
-    print("    │   t4 := 5       │")
-    print("    │   t5 := t4 + t3 │")
-    print("    │   x := t5       │")
-    print("    │   print x       │")
-    print("    └────────┬────────┘")
-    print("             ↓")
-    print("    ┌─────────────────┐")
-    print("    │      Exit       │")
-    print("    └─────────────────┘")
-    
-    print("\n⚡ STEP 4: Optimization (Constant Folding)")
-    print("    0    t1 := 2")
-    print("    1    t2 := 3")
-    print("    2    t3 := 6       (3 * 2 computed)")
-    print("    3    t4 := 5")
-    print("    4    t5 := 11      (5 + 6 computed)")
-    print("    5    x := 11")
-    print("    6    print x")
-    
-    print("\n🎯 STEP 5: Generated Output")
-    print("    x = 11")
-    print("    11")
-
-
-# ============================================
-# MAIN FOR IR GENERATOR ONLY
+# MAIN
 # ============================================
 
 def main():
     print("\n" + "█"*60)
-    print("IR GENERATOR - 5 MINUTE PRESENTATION")
+    print("IR GENERATOR - PRESENTATION MODE")
     print("█"*60)
     
     while True:
         print("\n" + "="*60)
         print("CHOOSE WHICH PART TO DISPLAY:")
         print("="*60)
-        print("  1. PART 1 - IR Levels (High/Medium/Low)")
-        print("  2. PART 2 - IR Structures (Graphical/Linear/Hybrid)")
-        print("  3. PART 3 - Three-Address Code (TAC)")
-        print("  4. PART 4 - Complete Example (All Steps)")
-        print("  5. SHOW ALL PARTS (Auto-play)")
+        print("  1. IR Levels (High/Medium/Low)")
+        print("  2. IR Structures (Graphical/Linear/Hybrid)")
+        print("  3. Three-Address Code (TAC)")
+        print("  4. Complete Example")
+        print("  5. SHOW ALL PARTS")
         print("  6. EXIT")
         
         choice = input("\nEnter choice (1-6): ").strip()
@@ -353,22 +413,18 @@ def main():
             part4_complete_example()
             input("\n▶ Press Enter to continue...")
         elif choice == "5":
-            print("\n" + "▶ SHOWING ALL PARTS - Press Enter after each part ◀")
-            input("\nPress Enter to start...")
+            print("\n▶ SHOWING ALL PARTS\n")
             part1_ir_levels()
-            input("\n▶ Press Enter for PART 2...")
             part2_ir_structures()
-            input("\n▶ Press Enter for PART 3...")
             part3_tac()
-            input("\n▶ Press Enter for PART 4...")
             part4_complete_example()
             print("\n✅ Presentation Complete!")
-            input("\n▶ Press Enter to return to menu...")
+            input("\n▶ Press Enter to return...")
         elif choice == "6":
             print("\n👋 Goodbye!")
             break
         else:
-            print("\n❌ Invalid choice. Try again.")
+            print("\n❌ Invalid choice.")
 
 
 if __name__ == "__main__":

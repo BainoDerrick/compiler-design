@@ -1,4 +1,4 @@
-# lexer.py - ADD support for float, string, char (KEEP your existing code)
+# lexer.py - UPDATED with specific error messages
 
 class Token:
     def __init__(self, type_, value, line, column):
@@ -49,21 +49,33 @@ class Lexer:
         """Read integers AND floats"""
         num_str = ""
         is_float = False
+        start_line = self.line
+        start_col = self.column
+        
         while self.current_char() and (self.current_char().isdigit() or self.current_char() == '.'):
             if self.current_char() == '.':
                 if is_float:
-                    raise Exception(f"Invalid number at line {self.line}")
+                    # Multiple decimal points - INVALID FLOAT
+                    raise Exception(f"Invalid float number at line {start_line}, column {start_col}: too many decimal points")
                 is_float = True
             num_str += self.current_char()
             self.advance()
         
         if is_float:
+            # Check if it ends with a dot (invalid)
+            if num_str.endswith('.'):
+                raise Exception(f"Invalid float number at line {start_line}, column {start_col}: number cannot end with '.'")
+            # Check if it starts with a dot (invalid)
+            if num_str.startswith('.'):
+                raise Exception(f"Invalid float number at line {start_line}, column {start_col}: number cannot start with '.'")
             self.add_token("FLOAT", float(num_str))
         else:
             self.add_token("NUMBER", int(num_str))
     
     def read_string(self):
         """Read string literals like "hello" """
+        start_line = self.line
+        start_col = self.column
         self.advance()  # skip opening "
         str_value = ""
         while self.current_char() and self.current_char() != '"':
@@ -74,10 +86,12 @@ class Lexer:
             self.advance()  # skip closing "
             self.add_token("STRING", str_value)
         else:
-            raise Exception(f"Unterminated string at line {self.line}")
+            raise Exception(f"Unterminated string at line {start_line}, column {start_col}: missing closing '\"'")
     
     def read_character(self):
         """Read character literals like 'a' """
+        start_line = self.line
+        start_col = self.column
         self.advance()  # skip opening '
         char_value = ""
         if self.current_char():
@@ -86,9 +100,11 @@ class Lexer:
         
         if self.current_char() == "'":
             self.advance()  # skip closing '
+            if len(char_value) == 0:
+                raise Exception(f"Invalid character at line {start_line}, column {start_col}: empty character literal")
             self.add_token("CHAR", char_value)
         else:
-            raise Exception(f"Unterminated character at line {self.line}")
+            raise Exception(f"Unterminated character at line {start_line}, column {start_col}: missing closing '''")
     
     def read_identifier_or_keyword(self):
         id_str = ""
@@ -110,8 +126,10 @@ class Lexer:
     
     def read_operator_or_symbol(self):
         char = self.current_char()
+        start_line = self.line
+        start_col = self.column
         
-        # Two-character operators like ==, !=, <=, >=
+        # Two-character operators
         if char == '=':
             if self.peek_next_char() == '=':
                 self.advance()
@@ -129,7 +147,7 @@ class Lexer:
                 self.add_token("NOT_EQUAL", "!=")
                 return
             else:
-                raise Exception(f"Invalid character '{char}' at line {self.line}, column {self.column}")
+                raise Exception(f"Invalid character '!' at line {start_line}, column {start_col}: expected '!='")
         
         elif char == '<':
             if self.peek_next_char() == '=':
@@ -151,11 +169,17 @@ class Lexer:
                 self.add_token("GREATER", ">")
             return
         
+        # Power operator ^
+        elif char == '^':
+            self.advance()
+            self.add_token("POWER", "^")
+            return
+        
         # Single-character operators and symbols
         operators_symbols = {
             '+': "PLUS", '-': "MINUS", '*': "MULTIPLY", '/': "DIVIDE",
             '(': "LPAREN", ')': "RPAREN", '{': "LBRACE", '}': "RBRACE",
-            ';': "SEMICOLON", ',': "COMMA", '?': "QUESTIONMARK", ':': "COLON"
+            ';': "SEMICOLON", ',': "COMMA"
         }
         
         if char in operators_symbols:
@@ -166,7 +190,7 @@ class Lexer:
         elif char == "'":
             self.read_character()
         else:
-            raise Exception(f"Unknown character '{char}' at line {self.line}, column {self.column}")
+            raise Exception(f"Unknown character '{char}' at line {start_line}, column {start_col}")
     
     def tokenize(self):
         while self.current_char():
