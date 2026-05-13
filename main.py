@@ -393,17 +393,36 @@ def team4_semantic(engine, output_text):
     output_text.insert(tk.END, "█ TEAM 4: SEMANTIC ANALYZER\n")
     output_text.insert(tk.END, "█" * 80 + "\n\n")
     
-    output_text.insert(tk.END, "📋 SYMBOL TABLE:\n")
-    output_text.insert(tk.END, "-" * 50 + "\n")
-    output_text.insert(tk.END, f"{'Name':<12} {'Type':<10} {'Initialized':<12} {'Used':<6}\n")
-    output_text.insert(tk.END, "-" * 50 + "\n")
+    output_text.insert(tk.END, "📋 SYMBOL TABLE (with Scope Information):\n")
+    output_text.insert(tk.END, "-" * 70 + "\n")
+    output_text.insert(tk.END, f"{'Name':<12} {'Type':<10} {'Scope':<20} {'Initialized':<12} {'Used':<6}\n")
+    output_text.insert(tk.END, "-" * 70 + "\n")
     
     if engine.symbol_table:
-        for info in engine.symbol_table.symbols.values():
-            output_text.insert(tk.END, f"{info.name:<12} {info.type:<10} {str(info.initialized):<12} {info.used:<6}\n")
+        # Sort by scope for better readability
+        symbols_list = list(engine.symbol_table.symbols.values())
+        symbols_list.sort(key=lambda x: (x.scope, x.name))
+        
+        for info in symbols_list:
+            output_text.insert(tk.END, f"{info.name:<12} {info.type:<10} {info.scope:<20} {str(info.initialized):<12} {info.used:<6}\n")
+        
+        # Show scope stack
+        output_text.insert(tk.END, "\n" + "-" * 70 + "\n")
+        output_text.insert(tk.END, f"📚 Scope Stack: {' → '.join(engine.symbol_table.scope_stack)}\n")
+        output_text.insert(tk.END, f"📍 Current Scope: {engine.symbol_table.current_scope}\n")
     
     output_text.insert(tk.END, f"\n✅ Variables declared: {len(engine.symbol_table.symbols) if engine.symbol_table else 0}\n")
-
+    
+    # Show any errors or warnings
+    if engine.symbol_table and engine.symbol_table.errors:
+        output_text.insert(tk.END, "\n❌ ERRORS:\n")
+        for err in engine.symbol_table.errors:
+            output_text.insert(tk.END, f"  {err}\n")
+    
+    if engine.symbol_table and engine.symbol_table.warnings:
+        output_text.insert(tk.END, "\n⚠️ WARNINGS:\n")
+        for warn in engine.symbol_table.warnings:
+            output_text.insert(tk.END, f"  {warn}\n")
 
 def team5_ir_generator(engine, output_text):
     output_text.insert(tk.END, "█" * 80 + "\n")
@@ -703,6 +722,7 @@ class CompilerGUI:
                 for err in self.engine.errors:
                     self.output_text.insert(tk.END, f"{err}\n")
             elif self.engine.stopped_at == "Semantic Analyzer":
+                # Show lexer and parser output first
                 self.output_text.insert(tk.END, "=" * 80 + "\n")
                 self.output_text.insert(tk.END, "LEXER OUTPUT (Tokens):\n")
                 self.output_text.insert(tk.END, "=" * 80 + "\n\n")
@@ -725,6 +745,7 @@ class CompilerGUI:
             self.status_label.config(text="❌ Compilation failed")
             return
         
+        # Show lexer and parser output first
         self.output_text.insert(tk.END, "=" * 80 + "\n")
         self.output_text.insert(tk.END, "LEXER OUTPUT (Tokens):\n")
         self.output_text.insert(tk.END, "=" * 80 + "\n\n")
@@ -737,8 +758,9 @@ class CompilerGUI:
         team2_topdown_parser(self.engine, self.output_text)
         self.output_text.insert(tk.END, "\n" + "=" * 80 + "\n\n")
         
+        # Then semantic output with full scope information
         self.output_text.insert(tk.END, "=" * 80 + "\n")
-        self.output_text.insert(tk.END, "SEMANTIC OUTPUT (Symbol Table):\n")
+        self.output_text.insert(tk.END, "SEMANTIC OUTPUT (Symbol Table with Scopes):\n")
         self.output_text.insert(tk.END, "=" * 80 + "\n\n")
         team4_semantic(self.engine, self.output_text)
         

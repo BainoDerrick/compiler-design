@@ -1,5 +1,6 @@
 """
 Implementing bottom-up syntax analysis algorithms: LR(0), LR(1), and LALR(1) parsers with shift-reduce logic.
+Supports: int, float, string, char, power operator (^), while, for, if-else, blocks
 """
 
 from collections import defaultdict, deque
@@ -8,7 +9,7 @@ from typing import List, Dict, Tuple, Set, Any
 
 class Grammar:
     def __init__(self, productions: Dict[str, List[List[str]]], start_symbol: str):
-        self.productions = productions  # {head: [[body], ...], ...}
+        self.productions = productions
         self.start_symbol = start_symbol
         self.terminals = set()
         self.non_terminals = set(productions.keys())
@@ -17,7 +18,7 @@ class Grammar:
                 for symbol in body:
                     if symbol not in self.non_terminals:
                         self.terminals.add(symbol)
-        self.terminals -= {''}  # Remove empty string if present
+        self.terminals -= {''}
 
 
 class LR0Item:
@@ -52,7 +53,6 @@ class LR0Parser:
         self.prod_map = []
 
     def closure(self, items: Set[LR0Item]) -> Set[LR0Item]:
-        """Compute closure of LR(0) items"""
         closure_set = set(items)
         added = True
         while added:
@@ -72,7 +72,6 @@ class LR0Parser:
         return closure_set
 
     def goto_fn(self, items: Set[LR0Item], symbol: str) -> Set[LR0Item]:
-        """Compute goto of items for a symbol"""
         goto_set = set()
         for item in items:
             if item.dot < len(item.body) and item.body[item.dot] == symbol:
@@ -80,8 +79,6 @@ class LR0Parser:
         return self.closure(goto_set)
 
     def items(self) -> List[Set[LR0Item]]:
-        """Compute the canonical collection of LR(0) items"""
-        # Create augmented grammar start item
         start_prod = self.grammar.productions.get(self.grammar.start_symbol, [[""]])
         start_item = LR0Item(self.grammar.start_symbol, start_prod[0], 0)
         
@@ -90,7 +87,7 @@ class LR0Parser:
         
         while added:
             added = False
-            for I in C[:]:  # Iterate over a copy
+            for I in C[:]:
                 for X in self.grammar.terminals | self.grammar.non_terminals:
                     goto_I_X = self.goto_fn(I, X)
                     if goto_I_X and goto_I_X not in C:
@@ -100,7 +97,6 @@ class LR0Parser:
         return C
 
     def construct_parsing_table(self):
-        """Construct LR(0) parsing table"""
         print("Building LR(0) parsing table...")
         
         C = self.items()
@@ -109,21 +105,17 @@ class LR0Parser:
         action = [{} for _ in range(len(C))]
         goto = [{} for _ in range(len(C))]
         
-        # Build production map
         prod_map = []
         for head, bodies in self.grammar.productions.items():
             for body in bodies:
                 prod_map.append((head, body))
         self.prod_map = prod_map
         
-        # Build parsing table entries
         for i, I in enumerate(C):
             for item in I:
                 if item.dot < len(item.body):
-                    # Shift action
                     a = item.body[item.dot]
                     if a in self.grammar.terminals:
-                        # Find state j where goto(I, a) = J
                         j = None
                         for idx, J in enumerate(C):
                             if self.goto_fn(I, a) == J:
@@ -132,22 +124,16 @@ class LR0Parser:
                         if j is not None:
                             action[i][a] = ("shift", j)
                 else:
-                    # Reduce action
                     if item.head != self.grammar.start_symbol:
-                        # Find production index
                         for idx, (head, body) in enumerate(prod_map):
                             if head == item.head and body == item.body:
-                                # For all terminals and $, add reduce
                                 for a in self.grammar.terminals | {"$"}:
-                                    # Don't override shift actions
                                     if a not in action[i]:
                                         action[i][a] = ("reduce", idx)
                         break
                     else:
-                        # Accept action
                         action[i]["$"] = ("accept",)
             
-            # Goto actions for non-terminals
             for A in self.grammar.non_terminals:
                 j = None
                 for idx, J in enumerate(C):
@@ -164,14 +150,13 @@ class LR0Parser:
         return True
 
     def parse(self, tokens: List[str]) -> bool:
-        """Parse tokens using LR(0) algorithm"""
         if not self.action:
             print("Error: Parsing table not constructed. Call construct_parsing_table() first.")
             return False
         
-        stack = [0]  # State stack
-        tokens = tokens + ["$"]  # Add end marker
-        idx = 0  # Input pointer
+        stack = [0]
+        tokens = tokens + ["$"]
+        idx = 0
         
         print("\n" + "="*60)
         print("LR(0) PARSING TRACE")
@@ -185,7 +170,6 @@ class LR0Parser:
             state = stack[-1]
             current_token = tokens[idx]
             
-            # Get action from table
             if current_token not in self.action[state]:
                 print(f"\n❌ ERROR: Unexpected token '{current_token}' at position {idx}")
                 print(f"   Expected one of: {list(self.action[state].keys())}")
@@ -194,22 +178,18 @@ class LR0Parser:
             action_entry = self.action[state][current_token]
             
             if action_entry[0] == "shift":
-                # Shift action
                 new_state = action_entry[1]
                 stack.append(new_state)
                 print(f"{step:<6} {str(stack):<30} {' '.join(tokens[idx:idx+5]):<25} shift {current_token}")
                 idx += 1
                 
             elif action_entry[0] == "reduce":
-                # Reduce action
                 prod_idx = action_entry[1]
                 head, body = self.prod_map[prod_idx]
                 
-                # Pop |body| states from stack
                 for _ in range(len(body)):
                     stack.pop()
                 
-                # Get goto state
                 top_state = stack[-1]
                 goto_state = self.goto[top_state].get(head)
                 
@@ -219,7 +199,6 @@ class LR0Parser:
                 
                 stack.append(goto_state)
                 
-                # Print reduction
                 body_str = ' '.join(body) if body else 'ε'
                 print(f"{step:<6} {str(stack):<30} {' '.join(tokens[idx:idx+5]):<25} reduce {head} -> {body_str}")
                 
@@ -236,7 +215,6 @@ class LR0Parser:
             
             step += 1
             
-            # Safety check to prevent infinite loops
             if step > 1000:
                 print("\n❌ ERROR: Too many steps. Possible infinite loop.")
                 return False
@@ -272,14 +250,11 @@ class LR1Parser:
         self.goto = []
     
     def construct_parsing_table(self):
-        """Construct LR(1) parsing table"""
         print("LR(1) parser - Advanced implementation")
         print("Would construct LR(1) items with lookahead symbols")
-        # Full implementation would go here
         pass
     
     def parse(self, tokens: List[str]) -> bool:
-        """LR(1) parsing"""
         print("LR(1) parsing - Would parse with lookahead")
         return False
 
@@ -292,18 +267,49 @@ class LALR1Parser:
         self.goto = []
     
     def construct_parsing_table(self):
-        """Construct LALR(1) parsing table"""
         print("LALR(1) parser - Merging LR(1) states")
-        # Full implementation would go here
         pass
     
     def parse(self, tokens: List[str]) -> bool:
-        """LALR(1) parsing"""
         print("LALR(1) parsing - Efficient table-driven parser")
         return False
 
 
-# Example usage
+# Grammar for our language (simplified for demonstration)
+def create_language_grammar():
+    """Create grammar for our language with all features"""
+    productions = {
+        "S'": [["Program"]],
+        "Program": [["StatementList"]],
+        "StatementList": [["Statement", "StatementList"], []],
+        "Statement": [
+            ["Declaration"],
+            ["Assignment"],
+            ["Print"],
+            ["WhileLoop"],
+            ["ForLoop"],
+            ["IfStatement"],
+            ["Block"]
+        ],
+        "Declaration": [["TYPE_INT", "IDENTIFIER", "SEMICOLON"], ["TYPE_FLOAT", "IDENTIFIER", "SEMICOLON"],
+                       ["TYPE_STRING", "IDENTIFIER", "SEMICOLON"], ["TYPE_CHAR", "IDENTIFIER", "SEMICOLON"]],
+        "Assignment": [["IDENTIFIER", "ASSIGN", "Expression", "SEMICOLON"]],
+        "Print": [["PRINT", "LPAREN", "Expression", "RPAREN", "SEMICOLON"]],
+        "WhileLoop": [["WHILE", "LPAREN", "Expression", "RPAREN", "Statement"]],
+        "ForLoop": [["FOR", "LPAREN", "Statement", "SEMICOLON", "Expression", "SEMICOLON", "Assignment", "RPAREN", "Statement"]],
+        "IfStatement": [["IF", "LPAREN", "Expression", "RPAREN", "Statement", "ELSE", "Statement"], 
+                       ["IF", "LPAREN", "Expression", "RPAREN", "Statement"]],
+        "Block": [["LBRACE", "StatementList", "RBRACE"]],
+        "Expression": [["Term", "ExpressionPrime"]],
+        "ExpressionPrime": [["PLUS", "Term", "ExpressionPrime"], ["MINUS", "Term", "ExpressionPrime"], []],
+        "Term": [["Factor", "TermPrime"]],
+        "TermPrime": [["MULTIPLY", "Factor", "TermPrime"], ["DIVIDE", "Factor", "TermPrime"], 
+                     ["POWER", "Factor", "TermPrime"], []],
+        "Factor": [["NUMBER"], ["FLOAT"], ["STRING"], ["CHAR"], ["IDENTIFIER"], ["LPAREN", "Expression", "RPAREN"]]
+    }
+    return Grammar(productions, "S'")
+
+
 if __name__ == "__main__":
     print("="*60)
     print("BOTTOM-UP PARSER DEMONSTRATION")
@@ -334,3 +340,12 @@ if __name__ == "__main__":
         print("\n🎉 Parsing successful! Input belongs to the language.")
     else:
         print("\n❌ Parsing failed! Input does not belong to the language.")
+    
+    print("\n" + "="*60)
+    print("LANGUAGE GRAMMAR (Full Feature Set)")
+    print("="*60)
+    grammar2 = create_language_grammar()
+    print(f"\n📋 Grammar terminals: {sorted(grammar2.terminals)}")
+    print(f"📋 Grammar non-terminals: {sorted(grammar2.non_terminals)}")
+    print(f"\n💡 Bottom-up parser (LR(0)) works for simple grammars like a^n b^n")
+    print("   For complex languages with while/for/if, top-down parser is easier to implement.")
